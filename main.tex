@@ -1,0 +1,276 @@
+\documentclass[10pt,a4paper]{article}
+
+\usepackage{float}
+\usepackage{subfigure}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{listings}
+\usepackage{alltt}
+\usepackage{multirow}
+\usepackage{rotating}
+\usepackage{courier}
+\usepackage{epsfig,endnotes,url,alltt,listings}
+\usepackage{color}
+\usepackage{framed}
+
+
+\usepackage{ETHkopf}
+\usepackage[utf8]{inputenc}
+\usepackage{booktabs}
+\usepackage{tabularx}
+
+
+\textwidth 160mm
+\textheight 230mm
+\oddsidemargin 0mm
+\evensidemargin 0mm
+\setlength{\parskip}{0.2cm}
+\setlength{\parindent}{0mm}
+
+\makeatletter
+\long\def\unmarkedfootnote#1{{\long\def\@makefntext##1{##1}\footnotetext{#1}}}
+\makeatother
+
+\def\refname{Reading material}
+
+\begin{document}
+
+%\title{Design and Implementation of a Microsecond-scale Spark Scheduler}
+\title{Microsecond-level Scheduling for Apache Spark}
+
+\author{Master Thesis Project for Lukas Drescher}
+\date{March-September, 2018}
+
+\maketitle
+
+
+\ETHkopf{Department of Computer Science, ETH Zurich}{Laboratory for Software
+Technology}
+
+\section*{Introduction}
+Apache Spark~\cite{2018-apache-spark} is one of the most popular distributed
+data processing frameworks. It offers a unified high-level abstraction 
+(Resilient Distributed Datasets~\cite{2011-nsdi-rdd}) in a single framework 
+for multiple data processing paradigms such as MapReduce, graph computation,
+stream analysis, machine learning, and SQL processing. Due to its high
+performance, convenient/intuitive programming APIs (provide an illusion 
+of a single machine), and support for multiple languages (Java, Scala, Python, 
+R, etc.), Spark is a popular choice for data scientists and developers. 
+
+
+Internally, Spark parallelizes a program or a job by breaking it into multiple 
+independent \textit{tasks} that run in stages. These tasks are scheduled on
+multiple executor machines to process a part of the data, and finally their
+outputs are combined to generate the final result. As demand for low latency, 
+interactive data processing increases, over the years many efforts have been 
+put to make the runtime of a task smaller. Apart from delivering interactivity 
+and high performance, small tasks are also beneficial to maintain fairness 
+between long running and short running jobs, mitigate stragglers and 
+skew issues, provide fast recoverability in a case of failure, and improve 
+resource utilization~\cite{2013-hotos-tiny-tasks}. 
+
+
+However, making tasks small and scheduling them present some
+interesting challenges.
+In order to support small tasks (at milli- and microseconds level), a 
+scheduler not only needs to make hundreds of thousands of 
+decisions per second, but it also has to manage
+and execute thousands of tasks at a similar rate. A high-performance
+scheduler design is an active research field where recent
+efforts~\cite{2015-sosp-sparrow,2015-eurosys-borg,2013-eurosys-omega,
+2016-osdi-firm,2017-atc-lowlat}
+have focussed on to (i) improve the throughput of the decision process with centralized, 
+decentralized, and hybrid scheduler designs; (ii) increase interactivity by 
+low-latency scheduling; and (iii) improve the cluster utilization by 
+high-quality task placement decisions. 
+However, sufficient focus has not been put to the task management and
+the control plane logic that involves launching, cordinating, executing 
+tasks, and then collecting the result~\cite{2017-atc-nimbus}. Specifically, 
+in a framework like Spark, there are multiple inefficiencies that stem from 
+(i) the actual scheduler implementation;  
+(ii) runtime/language related overheads~\cite{2017-hotos-runtime}; 
+(iii) communication and synchornization overheads; and  
+(iv) data access related overheads. 
+These inefficiencies effectively limits its scheduling throughput to a few 
+thousands tasks per second, while the ``core'' scheduler might be making 
+hundreds of thousands task placement decisions per second.     
+
+
+Recent advancements in the networking and storage hardware (100+ Gbps
+RDMA, NVMe flash, PCM memory), efficient I/O in management runtimes (IBM 
+DiSNI and DaRPC stacks), and the availability of high-performance distributed
+storage solutions (e.g., Apache Crail) enable us to build a high-performance
+control path for the scheduler, which is the prime focus of this thesis.
+Ousterhout et al. already analyzed the possibility of such a proposal 5 years 
+ago (section 3.3)~\cite{2013-hotos-tiny-tasks}: 
+
+\begin{quote}
+\textit{``Today’s datacenter networks easily allow a RPC to complete within 
+1ms. In fact, recent work showed that 10$\mu$s RPCs are possible in the short 
+term [26]; thus, with careful engineering, we believe task launch overheads 
+of 50$\mu$s are attainable. 50$\mu$s task launch overheads would enable even
+smaller tasks that could read data from in-memory or from flash storage
+in order to complete in milliseconds.''}
+\end{quote}
+
+However, to the best of our knowledge, we are not aware of any system that 
+is scheduling and operating in the microsecond range. Achieving this 
+performance requires support from the whole stack (devices, runtimes,
+the framework, operating system, etc.) that are only realized in the 
+last couple of years. As we move towards Microsecond-Scale Data Processing 
+Era, we have evidence that such system design and target performance 
+are now viable~\cite{2017-sosp-zygos,2017-killer}.
+
+% Current state-of-the-art 
+% implementations (e.g., Sparrow~\cite{2015-sosp-sparrow}) target to schedule 
+% tasks at the 10-100s milliseconds granularity due to various practical 
+% reasons. 
+% Going below the millisecond to the microsecond-level limit (to the
+% \textit{$\mu$Tasks}) presents some interesting considerations. These
+% considirations are presented in the Figure~\ref{}. First, in order to 
+% schedule tasks at the micro-second granularity, a schedular needs to 
+% make millions of placement decisions per second. The focus of recent 
+% works in this field have been to (i) improve the latency and throughput 
+% of the decision process; and (ii) improve the quality of 
+% decisions~\cite{omega,borg,sparrow}. 
+% 
+% 
+% We expect modern state-of-the-art 
+% schedular can support the desired performance level for $\mu$Tasks.
+% Secondly, $\mu$Tasks need microsecond-level data access in a distributed 
+% setting. Due to the recent advancements in the I/O hardware, modern 
+% networking and storage can provide 100+ Gbps of bandwidth, 10-100$\mu$sec 
+% of access latencies with millions of IOPS. This performance is now avaiable 
+% to data processing system using projects like Apache Crail~\cite{}. 
+% Apache Crail not only delivers very high performance for reading and
+% writing input/output datasets, but for the temporary data (e.g., shuffle,
+% broadcast, etc) as well. The last challenge, which is the prime focus 
+% of this thesis, is to lauch, execute, and finish a $\mu$Task as fast 
+% as possible. This is the last missing piece of the puzzle that enables 
+% us to do microsecond-level \textit{end-to-end} scheduling in Spark.   
+
+
+\section*{Goal and Scope}
+The goal of this thesis is to design and implement a Microsecond-level
+task scheduling framework for Apache Spark. The thesis work should focus on 
+the \textit{mechanism} (how to launch a networked task) than the 
+\textit{policy} (when and where to schedule). The
+thesis output should demonstrate what performance can be achieved without
+fundamentally altering the design of the Spark scheduler and execution 
+framework (for example, moving from a centralized to distributed scheduling).
+The target scope of deployment of the scheduler is in a Rack-scale computing,
+where 10-100s of closely connected machines execute multiple workloads in a 
+high-performance environment. 
+  
+% deployment setup of such a scheduler is Rack-scale (10-100s of
+% machines) workloads where closely connected servers execute     
+% 
+% 
+%  The idea of such semi-research work is always to explore if  the idea is
+% possible, under what conditions, and if not then explain why not. Is it 
+% something fundamental that cannot be changed (like the speed of light) or 
+% just a matter of time or a design constraint, etc. As we discussed today, just 
+% doing the back-of-the-envelop calculation shows that scheduling in useconds 
+% "should" be possible. May be it is only attenable for null-tasks or may be 
+% it works also for general purpose tasks.
+%  behaviour of
+% the
+% 
+% the control plane where task l 
+% 
+% implementation should focus on demonstrating the feasibility of the approach
+% in a real working system.
+% To the best of our knowledge, there is no Spark schedular 
+% that can operate at the microsecond level. 
+
+\section*{Tasks}
+
+More specifically, the student \textit{should} focus on following tasks to
+improve the performance of the scheudling framework in Spark:
+
+\begin{itemize}
+  \item \textbf{Communication Overheads:} In order to support $<10\mu$s 
+  task launch times, the communication layer in Spark (between the
+  driver and executors) should be optimized for high-performance
+  networks. Here the focus of the work should be on porting the Spark's
+  Netty/NIO based RPC communication framework to a highly-optimized RDMA
+  based DaRPC implementation~\cite{2018-github-darpc,2014-socc-darpc}.
+
+\item \textbf{Java/JVM Overheads:} Here, the focus should be to improve the 
+overheads that emerge from implementing the framework in a managed runtime 
+like JVM. These overheads might come from (de)serialization, data copies, 
+object management and garbage collection, etc. An example analysis can 
+be references here~\cite{2016-osdi-warmjvm}.  
+  
+\item \textbf{Scheduler Implementation:} Lastly, the effort here should be
+focused on the implementation related overheads in the current Spark scheduler
+implementation. There may be inefficiencies related to the concurrent 
+data structures used, locking, notification, resource management, 
+unnecessary code in the critical path, etc. General overheads from the 
+inefficient distributed control path are discussed here~\cite{2017-atc-nimbus}.    
+\end{itemize}
+
+As we move further in the thesis work, we expect these directions to be 
+revised with the input from the implementation and performance profiling
+tools.  
+
+\section*{General instructions}
+
+\begin{itemize} 
+  
+  \item The project starts on March 11th, 2018.
+  
+  \item The project should be completed by September 10th, 2018.
+
+  \item Prepare a thesis draft containing Introduction, Problem Statement and
+  Related work, and a time plan after a month.
+  
+  \item The progress of the thesis work should be discussed regularly with
+  the supervisors at ETH and IBM Research.
+  
+  \item The deliverables of this work are (1) the source code, (2) a
+  report, and (3) a one page summary.
+  
+  \item The report should be phrased as a scientific essay and in PDF format.
+  Report must be in English. 
+  
+  \item There should be an oral presentation at the end of the thesis
+  work.
+  
+\end{itemize}
+
+
+\section*{Grading scheme}
+
+Grading will be based on the following criteria:
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Criterion & Weight ($\pm$ 0.5) \\
+\midrule
+Implementation (functionality, extensibility, documentation) & 3 \\
+Report (content, illustration, writing) & 2 \\
+Presentation (content, illustration, quality of talk) & 1 \\
+Approach (organization, approaching problems, independence, involvement) & 1
+\\
+Contribution to the state of the art research & 1 \\
+Completion of all tasks & 2 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Each criterion will be graded in accordance with the
+``Merkblatt zur Master-Arbeit in Informatik nach Studienreglement 09''.
+%``Merkblatt zur Bachelor-Arbeit in Informatik nach Studienreglement 08''.
+
+
+\textbf{ETH Professor:} Prof. Dr. Thomas R. Gross (trg@inf.ethz.ch)\\
+\textbf{IBM Research Supervisor:} Animesh Trivedi (atr@zurich.ibm.com)\\
+
+%\pagebreak
+\raggedright
+%% BIBLIOGRAPHY
+\bibliographystyle{unsrt}
+\bibliography{main}
+\end{document}
