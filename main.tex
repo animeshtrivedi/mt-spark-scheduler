@@ -38,7 +38,7 @@
 %\title{Design and Implementation of a Microsecond-scale Spark Scheduler}
 \title{Microsecond-level Scheduling for Apache Spark}
 
-\author{Master Thesis Project for Lukas Drescher}
+\author{External Master Thesis Project for Lukas Drescher}
 \date{March-September, 2018}
 
 \maketitle
@@ -61,10 +61,10 @@ R, etc.), Spark is a popular choice for data scientists and developers.
 Internally, Spark parallelizes a program or a job by breaking it into multiple 
 independent \textit{tasks} that run in stages. These tasks are scheduled on
 multiple executor machines to process a part of the data, and finally their
-outputs are combined to generate the final result. As demand for low latency, 
-interactive data processing increases, over the years many efforts have been 
+outputs are combined to generate the result. As the demand for low latency, 
+interactive data processing increases, over the years, many efforts have been 
 put to make the runtime of a task smaller. Apart from delivering interactivity 
-and high performance, small tasks are also beneficial to maintain fairness 
+and high performance, small tasks are also beneficial to maintain the fairness 
 between long running and short running jobs, mitigate stragglers and 
 skew issues, provide fast recoverability in a case of failure, and improve 
 resource utilization~\cite{2013-hotos-tiny-tasks}. 
@@ -79,30 +79,31 @@ and execute thousands of tasks at a similar rate. A high-performance
 scheduler design is an active research field where recent
 efforts~\cite{2015-sosp-sparrow,2015-eurosys-borg,2013-eurosys-omega,
 2016-osdi-firm,2017-atc-lowlat}
-have focussed on to (i) improve the throughput of the decision process with centralized, 
-decentralized, and hybrid scheduler designs; (ii) increase interactivity by 
-low-latency scheduling; and (iii) improve the cluster utilization by 
-high-quality task placement decisions. 
-However, sufficient focus has not been put to the task management and
-the control plane logic that involves launching, cordinating, executing 
-tasks, and then collecting the result~\cite{2017-atc-nimbus}. Specifically, 
-in a framework like Spark, there are multiple inefficiencies that stem from 
+have focussed on (i) improving the throughput of the decision process with
+centralized, decentralized, and hybrid scheduler designs; (ii) increasing
+interactivity by low-latency scheduling; and 
+(iii) improving the cluster utilization by high-quality task placement
+decisions.
+However, not enough focus has not been put to the \textit{task management} 
+and the \textit{control plane logic} that involve launching, cordinating,
+and executing tasks and then collecting the result~\cite{2017-atc-nimbus}.
+Specifically, in a framework like Spark, there are multiple inefficiencies that stem from 
 (i) the actual scheduler implementation;  
 (ii) runtime/language related overheads~\cite{2017-hotos-runtime}; 
-(iii) communication and synchornization overheads; and  
+(iii) communication and synchronization overheads; and  
 (iv) data access related overheads. 
 These inefficiencies effectively limits its scheduling throughput to a few 
-thousands tasks per second, while the ``core'' scheduler might be making 
+thousand tasks per second, while the ``core'' scheduler might be making 
 hundreds of thousands task placement decisions per second.     
 
 
 Recent advancements in the networking and storage hardware (100+ Gbps
 RDMA, NVMe flash, PCM memory), efficient I/O in management runtimes (IBM 
 DiSNI and DaRPC stacks), and the availability of high-performance distributed
-storage solutions (e.g., Apache Crail) enable us to build a high-performance
+storage solutions (e.g., Apache Crail) now enable us to build a high-performance
 control path for the scheduler, which is the prime focus of this thesis.
-Ousterhout et al. already analyzed the possibility of such a proposal 5 years 
-ago (section 3.3)~\cite{2013-hotos-tiny-tasks}: 
+Ousterhout et al. already analyzed the possibility of such a proposal five 
+years ago (section 3.3)~\cite{2013-hotos-tiny-tasks}: 
 
 \begin{quote}
 \textit{``Today’s datacenter networks easily allow a RPC to complete within 
@@ -113,13 +114,16 @@ smaller tasks that could read data from in-memory or from flash storage
 in order to complete in milliseconds.''}
 \end{quote}
 
-However, to the best of our knowledge, we are not aware of any system that 
-is scheduling and operating in the microsecond range. Achieving this 
-performance requires support from the whole stack (devices, runtimes,
-the framework, operating system, etc.) that are only realized in the 
-last couple of years. As we move towards Microsecond-Scale Data Processing 
-Era, we have evidence that such system design and target performance 
-are now viable~\cite{2017-sosp-zygos,2017-killer}.
+To the best of our knowledge, we are not aware of any
+general-purpose system that is scheduling and operating in the 
+microsecond range while scheduling hundreds of thousands of tasks 
+per second.
+Achieving this performance requires support from the whole stack 
+(devices, runtimes, the framework, operating system, etc.) which is 
+only realized in the last couple of years. As we move towards 
+the \textit{Microsecond-Scale Data Processing Era}, we have evidence 
+that such system design and target performance are now
+viable~\cite{2017-sosp-zygos,2017-killer}.
 
 % Current state-of-the-art 
 % implementations (e.g., Sparrow~\cite{2015-sosp-sparrow}) target to schedule 
@@ -153,13 +157,13 @@ are now viable~\cite{2017-sosp-zygos,2017-killer}.
 \section*{Goal and Scope}
 The goal of this thesis is to design and implement a Microsecond-level
 task scheduling framework for Apache Spark. The thesis work should focus on 
-the \textit{mechanism} (how to launch a networked task) than the 
-\textit{policy} (when and where to schedule). The
-thesis output should demonstrate what performance can be achieved without
-fundamentally altering the design of the Spark scheduler and execution 
-framework (for example, moving from a centralized to distributed scheduling).
-The target scope of deployment of the scheduler is in a Rack-scale computing,
-where 10-100s of closely connected machines execute multiple workloads in a 
+the \textit{mechanism} (how to launch a networked task) rather than the 
+\textit{policy} (when and where to schedule). The thesis output should 
+demonstrate what performance can be achieved without fundamentally altering 
+the design of the Spark scheduler and execution framework (for example, 
+moving from a centralized to distributed scheduling). The target scope of
+deployment of the scheduler is in a Rack-scale computing, where 10-100s 
+of closely connected machines execute multiple workloads in a 
 high-performance environment. 
   
 % deployment setup of such a scheduler is Rack-scale (10-100s of
@@ -186,44 +190,46 @@ high-performance environment.
 \section*{Tasks}
 
 More specifically, the student \textit{should} focus on following tasks to
-improve the performance of the scheudling framework in Spark:
+improve the performance of the scheduling framework in Spark:
 
 \begin{itemize}
   \item \textbf{Communication Overheads:} In order to support $<10\mu$s 
   task launch times, the communication layer in Spark (between the
   driver and executors) should be optimized for high-performance
-  networks. Here the focus of the work should be on porting the Spark's
+  networks. Here, the focus of the work should be on porting the Spark's
   Netty/NIO based RPC communication framework to a highly-optimized RDMA
   based DaRPC implementation~\cite{2018-github-darpc,2014-socc-darpc}.
 
-\item \textbf{Java/JVM Overheads:} Here, the focus should be to improve the 
-overheads that emerge from implementing the framework in a managed runtime 
+\item \textbf{Java/JVM Overheads:} Here, the focus should be on removing 
+overheads that emerge from implementing the framework in a managed runtime
 like JVM. These overheads might come from (de)serialization, data copies, 
-object management and garbage collection, etc. An example analysis can 
-be references here~\cite{2016-osdi-warmjvm}.  
+object management, efficient Java/Scala codes, JITing issues, 
+and garbage collection, etc. An example analysis can be referenced
+here~\cite{2016-osdi-warmjvm}.
   
 \item \textbf{Scheduler Implementation:} Lastly, the effort here should be
-focused on the implementation related overheads in the current Spark scheduler
-implementation. There may be inefficiencies related to the concurrent 
+focused on the implementation-related overheads in the current Spark scheduler
+code. There may be inefficiencies related to the concurrent 
 data structures used, locking, notification, resource management, 
 unnecessary code in the critical path, etc. General overheads from the 
-inefficient distributed control path are discussed here~\cite{2017-atc-nimbus}.    
+inefficient distributed control path for long-running repetitive tasks 
+are discussed here~\cite{2017-atc-nimbus}.
 \end{itemize}
 
 As we move further in the thesis work, we expect these directions to be 
-revised with the input from the implementation and performance profiling
-tools.  
+revised and new directions to emerge with the input from implementation 
+and performance profiling tools.  
 
 \section*{General instructions}
 
 \begin{itemize} 
   
-  \item The project starts on March 11th, 2018.
+  \item The project starts on March 13th, 2018.
   
-  \item The project should be completed by September 10th, 2018.
+  \item The project should be completed by September 11th, 2018.
 
   \item Prepare a thesis draft containing Introduction, Problem Statement and
-  Related work, and a time plan after a month.
+  Related Work, and a work plan after a month.
   
   \item The progress of the thesis work should be discussed regularly with
   the supervisors at ETH and IBM Research.
@@ -232,7 +238,7 @@ tools.
   report, and (3) a one page summary.
   
   \item The report should be phrased as a scientific essay and in PDF format.
-  Report must be in English. 
+  It must be in English. 
   
   \item There should be an oral presentation at the end of the thesis
   work.
